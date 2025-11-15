@@ -116,13 +116,6 @@ def open_whatsapp():
         # Final check
         messages = driver.find_elements(By.CSS_SELECTOR, '[data-pre-plain-text]')
         
-        if len(messages) < 5:
-            print(f"⚠ Warning: Only {len(messages)} messages available after {max_attempts} attempts.")
-            proceed = input("Continue anyway? (y/n): ").strip().lower()
-            if proceed != 'y':
-                print("Exiting...")
-                return []
-        
         last_messages = messages[-message_count:] if len(messages) >= message_count else messages
 
         message_data = []
