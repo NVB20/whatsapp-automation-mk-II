@@ -9,9 +9,7 @@
 import re
 import os
 from dotenv import load_dotenv
-from typing import Dict, List, Optional
-import gspread
-from google.oauth2.service_account import Credentials
+from typing import Dict, List
 from src.sheets_connect import init_google_sheets
 
 # Load environment variables
@@ -208,3 +206,5 @@ def process_messages(messages: List[Dict]) -> Dict[str, List[Dict]]:
     }
 
 
+
+    
