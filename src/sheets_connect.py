@@ -25,25 +25,6 @@ def init_google_sheets():
             print(f"📁 Current working directory: {os.getcwd()}")
             print(f"🔍 Looking for file at: {os.path.abspath(CREDENTIALS_FILE)}")
             
-            # Try alternative paths
-            alternative_paths = [
-                "secrets/sheets-api-cred.json",
-                "./secrets/sheets-api-cred.json",
-                "../secrets/sheets-api-cred.json",
-                "C:/Users/nivb4/OneDrive/Desktop/all/tracker project/mk2/secrets/sheets-api-cred.json"
-            ]
-            
-            for path in alternative_paths:
-                if os.path.exists(path):
-                    print(f"✅ Found credentials at: {path}")
-                    creds = Credentials.from_service_account_file(path, scopes=scopes)
-                    client = gspread.authorize(creds)
-                    print(f"✅ Successfully connected to Google Sheets")
-                    return client
-            
-            print("❌ Could not find credentials file in any expected location")
-            return None
-            
         creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
         client = gspread.authorize(creds)
         print(f"✅ Successfully connected to Google Sheets")
