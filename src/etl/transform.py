@@ -5,6 +5,7 @@
 #connect from sheets if phone --> name || if name --> phone and add lesson
 #jsonify the messages
 # end goal: filtered dicts messges: {phone number, name, type(message/practice), lesson, teacher, last messge, }
+#remove last message
 
 import re
 import os
@@ -38,7 +39,6 @@ def load_student_data() -> tuple[Dict[str, Dict], Dict[str, Dict]]:
         tuple: (phone_to_data dict, name_to_data dict)
     """
     try:
-        init_google_sheets()
         client = init_google_sheets()
         if not client:
             print("Failed to initialize Google Sheets client")
@@ -81,10 +81,6 @@ def load_student_data() -> tuple[Dict[str, Dict], Dict[str, Dict]]:
                 }
                 phone_to_data[cleaned_phone] = student_data
                 
-                # Debug: Print cleaned phone
-                if idx <= 5:
-                    print(f"  Cleaned phone: '{cleaned_phone}'")
-                
                 # Also map by name for reverse lookup
                 if name:
                     name_to_data[name.lower()] = student_data
@@ -100,21 +96,41 @@ def load_student_data() -> tuple[Dict[str, Dict], Dict[str, Dict]]:
         return {}, {}
 
 
+import re
+
 def clean_phone_number(phone: str) -> str:
-    """Clean phone number to format: 972 52-299-1474"""
-    # Remove unicode direction marks and other special characters
-    cleaned = re.sub(r'[\u2066\u2069\u200e\u200f\s+]', '', phone)
-    
-    # Extract digits only
-    digits = re.sub(r'\D', '', cleaned)
-    
-    # Format: 972 52-299-1474 (country code, then XX-XXX-XXXX)
-    if digits.startswith('972'):
-        # Already has country code
-        if len(digits) == 12:  # 972 + 9 digits
-            return f"{digits[:3]} {digits[3:5]}-{digits[5:8]}-{digits[8:]}"
-    
-    return digits  # Return as-is if format doesn't match
+    """
+    Clean and normalize phone numbers.
+    - Removes Unicode direction marks, spaces, symbols.
+    - Detects Israeli numbers and formats: 972 52-299-1474
+    - For other countries: returns +<digits> (E.164 style)
+    """
+
+    # Remove direction marks, whitespace, and invisible characters
+    cleaned = re.sub(r'[\u2066\u2069\u200e\u200f\s]', '', phone)
+
+    # Fix "+" if inserted between characters like "+ 972"
+    cleaned = cleaned.replace("+", "")
+
+    # Keep only digits
+    digits = re.sub(r'\D', "", cleaned)
+
+    # If empty → return empty
+    if not digits:
+        return ""
+
+    # Local IL number (10 digits starting with 05X)
+    if len(digits) == 10 and digits.startswith("05"):
+        intl = "972" + digits[1:]
+        return f"{intl[:3]} {intl[3:5]}-{intl[5:8]}-{intl[8:]}"  # 972 52-299-1474
+
+    # Already international Israeli (starts with 972)
+    if digits.startswith("972") and len(digits) == 12:
+        return f"{digits[:3]} {digits[3:5]}-{digits[5:8]}-{digits[8:]}"
+
+
+    return digits
+
 
 
 def contains_keyword(text: str, keywords: List[str]) -> bool:
@@ -156,18 +172,19 @@ def extract_student_info(sender: str, phone_to_data: Dict, name_to_data: Dict) -
     }
 
 
-def process_messages(messages: List[Dict]) -> Dict[str, List[Dict]]:
+def process_messages(messages: List[Dict]) -> List[Dict]: 
     """
-    Process messages and separate into categories
+    Process messages and enrich with student data
     
     Returns:
-        Dict with 'practice' and 'message' lists containing enriched message data
+        List of enriched messages ready for database
     """
     # Load student data from Google Sheets
     phone_to_data, name_to_data = load_student_data()
     
-    practice_messages = []
-    message_sent = []
+    processed_messages = []
+    practice_count = 0
+    message_count = 0
     
     for msg in messages:
         # Get student info from Google Sheets
@@ -177,34 +194,28 @@ def process_messages(messages: List[Dict]) -> Dict[str, List[Dict]]:
         msg_type = None
         if contains_keyword(msg['text'], PRACTICE_WORDS):
             msg_type = "practice"
+            practice_count += 1
         elif contains_keyword(msg['text'], MESSAGE_WORDS):
             msg_type = "message"
+            message_count += 1
         
         if msg_type:
-            # Create enriched message dict
+            # Create enriched message dict with ALL required fields
             enriched_msg = {
+                # Required fields for MongoDB
                 'phone_number': student_info['phone'],
+                'timestamp': msg['timestamp'],
+                'content': msg['text'],  # IMPORTANT: Add the actual message text!
+                
+                # Optional enrichment fields
                 'name': student_info['name'],
-                'type': msg_type,
+                'message_category': msg_type,  # 'practice' or 'message'
                 'lesson': student_info['lesson'],
-                'teacher': student_info['teacher'],
-                'last_message': msg['text'],
-                'timestamp': msg['timestamp']
             }
             
-            if msg_type == "practice":
-                practice_messages.append(enriched_msg)
-            else:
-                message_sent.append(enriched_msg)
+            processed_messages.append(enriched_msg)
     
-    print(f"=== {len(practice_messages)} Practice Messages Found ===")    
-    print(f"=== {len(message_sent)} Messages Sent Found ===")
+    print(f"=== {practice_count} Practice Messages Found ===")    
+    print(f"=== {message_count} Messages Sent Found ===")
     
-    return {
-        'practice': practice_messages,
-        'message': message_sent
-    }
-
-
-
-    
+    return processed_messages  
