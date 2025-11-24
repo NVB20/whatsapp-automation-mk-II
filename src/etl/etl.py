@@ -37,6 +37,7 @@ def run_etl():
             sheets_results = update_sheets_from_mongo()
             
             if sheets_results:
+                print(f"{len(messages)} messages scaned")
                 print(f"✓ Sheets updated: {sheets_results['updates_needed']} students")
         else:
             print("⊘ No new messages - skipping Sheets update")
