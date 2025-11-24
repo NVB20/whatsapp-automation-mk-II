@@ -141,11 +141,11 @@ def open_whatsapp():
             except Exception as e:
                 print("Error reading message:", e)
 
-        print(f"\n=== Last {message_count} messages ===")
+        print(f"=== Last {message_count} messages ===")
         for m in message_data:
             print(m)
 
-        print("\nFinished reading messages!")
+        print("Finished reading messages!")
         print(f"{len(message_data)} messages read")
         return message_data
 

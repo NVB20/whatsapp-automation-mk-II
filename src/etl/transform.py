@@ -85,7 +85,7 @@ def load_student_data() -> tuple[Dict[str, Dict], Dict[str, Dict]]:
                 if name:
                     name_to_data[name.lower()] = student_data
         
-        print(f"\nLoaded {len(phone_to_data)} students from Google Sheets")
+        print(f"Loaded {len(phone_to_data)} students from Google Sheets")
         print(f"Sample phone numbers in mapping: {list(phone_to_data.keys())[:3]}")
         return phone_to_data, name_to_data
     

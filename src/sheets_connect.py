@@ -13,10 +13,7 @@ credentials_file = os.getenv("CREDENTIALS_FILE")
 
 def init_google_sheets():
     """Initialize Google Sheets connection"""
-    scopes = [
-        'https://www.googleapis.com/auth/spreadsheets.readonly',
-        'https://www.googleapis.com/auth/drive.readonly'
-    ]
+    scopes = ['https://www.googleapis.com/auth/spreadsheets']
     
     try:            
         creds = Credentials.from_service_account_file(credentials_file, scopes=scopes)
