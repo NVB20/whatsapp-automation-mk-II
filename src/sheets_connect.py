@@ -7,7 +7,6 @@ from google.oauth2.service_account import Credentials
 load_dotenv()
 
 # Google Sheets configuration
-sheet_id = os.getenv("SHEET_ID")
 credentials_file = os.getenv("CREDENTIALS_FILE")
 
 
