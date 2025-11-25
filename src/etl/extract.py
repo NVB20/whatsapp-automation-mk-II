@@ -46,7 +46,7 @@ def open_whatsapp_browser():
 
 def open_group(driver, wait, group_name):
     """Open a WhatsApp group by name"""
-    print(f"\n--- Opening group: {group_name} ---")
+    print(f"--- Opening group: {group_name} ---")
 
     # Focus search box
     search_box = wait.until(
@@ -162,7 +162,7 @@ def run_multi_group_reader():
         open_group(driver, wait, SALES)
         sales_messages = read_messages(driver, MESSAGE_COUNT)
 
-        print("\n=== DONE ===")
+        print("=== DONE ===")
         return {
             "students": students_messages,
             "sales": sales_messages
