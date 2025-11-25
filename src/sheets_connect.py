@@ -17,11 +17,11 @@ def init_google_sheets():
     try:            
         creds = Credentials.from_service_account_file(credentials_file, scopes=scopes)
         client = gspread.authorize(creds)
-        print(f"✅ Successfully connected to Google Sheets")
+        print(f"Successfully connected to Google Sheets")
         return client
         
     except Exception as e:
-        print(f"❌ Error initializing Google Sheets: {e}")
+        print(f"Error initializing Google Sheets: {e}")
         import traceback
         traceback.print_exc()
         return None
