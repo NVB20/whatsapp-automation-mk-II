@@ -1,4 +1,10 @@
+import os
 from src.etl.sales_etl.transform import format_leads_for_sheets
+from src.sheets_connect import init_google_sheets
+from dotenv import load_dotenv
+
+# Load environment variables once at module level
+load_dotenv()
 
 def find_next_empty_row(sheet, column='B'):
     """
@@ -19,7 +25,7 @@ def find_next_empty_row(sheet, column='B'):
 
 
 
-def upload_leads_to_sheets(sheet, leads):
+def upload_leads_to_sheets(leads):
     """
     Upload leads to Google Sheets starting from the next available row.
     """
@@ -27,6 +33,8 @@ def upload_leads_to_sheets(sheet, leads):
         print("No leads to upload.")
         return {"success": 0, "errors": []}
     
+    sheet = get_sales_worksheet()
+
     # Find starting row
     start_row = find_next_empty_row(sheet)
     
@@ -59,3 +67,20 @@ def upload_leads_to_sheets(sheet, leads):
             "success": 0,
             "errors": [str(e)]
         }
+    
+def get_sales_worksheet():
+    """
+    Get the sales worksheet connection.
+    Separated for reusability and testing.
+    """
+    sheet_id = os.getenv("SALES_SHEET_ID")
+    
+    if not sheet_id:
+        raise ValueError("SALES_SHEET_ID not found in environment variables")
+    
+    client = init_google_sheets()
+    spreadsheet = client.open_by_key(sheet_id)
+    worksheet = spreadsheet.worksheet("main")
+    
+    print(f"✓ Connected to sales spreadsheet")
+    return worksheet   
