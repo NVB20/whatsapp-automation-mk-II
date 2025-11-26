@@ -1,8 +1,6 @@
 from src.etl.extract import run_multi_group_reader
-from src.etl.transform import process_messages
-from src.etl.db.mongodb.message_saver import MessageSaver
-from src.etl.sheets_updater import update_sheets_from_mongo
-from src.etl.sales_etl.etl import run_sales_etl
+from src.etl.sales_etl.sales_etl import run_sales_etl
+from src.etl.students_etl.students_etl import run_students_etl
 
 def run_etl():
     # Extract both groups
@@ -10,57 +8,14 @@ def run_etl():
     students_messages = extract_result["students"]
     sales_messages = extract_result["sales"]
     
-    
-
-
-    
     if len(students_messages) == 0:
-        print("=" * 60 +"\n" + "failed to read students messages" + "=" * 60 +"\n")
+        print("=" * 60 + "\n" + "failed to read students messages" + "\n" + "=" * 60)
         return
     else:
         run_students_etl(students_messages)
 
     if len(sales_messages) == 0:
-        print("=" * 60 +"\n" + "failed to read sales messages" + "=" * 60 +"\n")
+        print("=" * 60 +"\n" + "failed to read sales messages" + "=" * 60 )
         return
     else:
         run_sales_etl(sales_messages)
-
-
-def run_students_etl(students_messages):
-    # Transform
-    students_messages = process_messages(students_messages)
-    print(f"Processed {len(students_messages)} messages")
-
-    # Load (with deduplication)
-    try:
-        saver = MessageSaver()
-        results = saver.save_messages_batch(students_messages)
-        
-        # Print results
-        print("=" * 60 +"\n" + "DATABASE SAVE RESULTS" + "=" * 60 +"\n")
-        print(f"Total processed:     {results['total']}")
-        print(f"✓ New messages:      {results['inserted']}")
-        print(f"⊘ Duplicates skipped: {results['skipped']}")
-        print(f"✗ Errors:            {results['errors']}")
-        print("=" * 60)
-        
-        # Update Google Sheets with latest practice dates
-        if results['inserted'] > 0:
-            print("Updating Google Sheets with latest practice dates...")
-            sheets_results = update_sheets_from_mongo()
-            
-            if sheets_results:
-                print(f"{len(students_messages)} messages scanned")
-                print(f"✓ Sheets updated: {sheets_results['updates_needed']} students")
-        else:
-            print("⊘ No new messages - skipping Sheets update")
-        
-        return results
-        
-    except Exception as e:
-        print("=" * 60)
-        print("DATABASE SAVE FAILED")
-        print("=" * 60)
-        print(f"Error: {e}")
-        raise

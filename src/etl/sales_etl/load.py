@@ -22,9 +22,6 @@ def find_next_empty_row(sheet, column='B'):
     return next_row
 
 
-
-
-
 def upload_leads_to_sheets(leads):
     """
     Upload leads to Google Sheets starting from the next available row.
@@ -67,6 +64,7 @@ def upload_leads_to_sheets(leads):
             "success": 0,
             "errors": [str(e)]
         }
+    
     
 def get_sales_worksheet():
     """
