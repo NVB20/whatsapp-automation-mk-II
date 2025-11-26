@@ -10,7 +10,7 @@ class MessageSaver:
     def __init__(self):
         """Initialize connection and setup unique index"""
         self.mongo = get_mongo_connection()
-        self.collection = self.mongo.get_messages_collection()
+        self.collection = self.mongo.get_students_messages_collection()
         self._setup_unique_index()
     
     def _setup_unique_index(self):
