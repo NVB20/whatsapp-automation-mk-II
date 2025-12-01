@@ -19,6 +19,25 @@ PRACTICE_WORDS = [word.strip() for word in PRACTICE_WORDS if word.strip()]
 MESSAGE_WORDS = [word.strip() for word in MESSAGE_WORDS if word.strip()]
 
 
+def normalize_phone_number(phone: str) -> str:
+    """
+    Normalize phone number by removing special characters and formatting consistently.
+    Handles formats like:
+    - '+972 55-660-2298' -> '972 55-660-2298'
+    - '⁦+972 55-660-2298⁩' -> '972 55-660-2298'
+    """
+    if not phone:
+        return ''
+    
+    # Remove invisible Unicode characters (left-to-right marks, zero-width spaces, etc.)
+    phone = ''.join(char for char in phone if char.isprintable())
+    
+    # Remove the leading + if present
+    phone = phone.lstrip('+').strip()
+    
+    return phone
+
+
 def contains_keyword(text: str, keywords: List[str]) -> bool:
     """Check if text contains any of the keywords."""
     return any(keyword in text for keyword in keywords)
@@ -71,9 +90,27 @@ def get_students_from_sheets() -> Dict[str, Dict[str, str]]:
             if not phone:
                 continue
             
+            # Normalize phone number
+            phone = normalize_phone_number(phone)
+            
             # Extract lesson number from "שיעור num" format
+            # Handle cases like "שיעור 12שיעור 12שיעור 9" - take only the first occurrence
             lesson_raw = row[2].strip() if len(row) > 2 and row[2] else ''
-            lesson_number = lesson_raw.replace('שיעור', '').strip()
+            
+            # Find the first occurrence of "שיעור" and extract the number after it
+            if 'שיעור' in lesson_raw:
+                # Split by 'שיעור' and get the second part (first number)
+                parts = lesson_raw.split('שיעור')
+                # Get the first non-empty part after 'שיעור'
+                for part in parts[1:]:
+                    # Extract only digits from the beginning of the part
+                    lesson_number = ''.join(c for c in part if c.isdigit())
+                    if lesson_number:
+                        break
+                else:
+                    lesson_number = ''
+            else:
+                lesson_number = ''
             
             students_dict[phone] = {
                 'name': row[1].strip() if len(row) > 1 and row[1] else '',
@@ -140,16 +177,11 @@ def transform(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             'last_message': datetime or None (from mongo) - only if message_type is 'message',
             'last_practice': datetime or None (from mongo) - only if message_type is 'practice'
         }
-    
-    Args:
-        messages: List of message dictionaries from extract phase
-    
-    Returns:
-        List of transformed records ready for loading
     """
-    print(f"\n{'='*60}")
+    print(f"{'='*60}")
     print(f"Starting transform for {len(messages)} messages")
     print(f"{'='*60}")
+
     
     # Get student data from Google Sheets
     students_dict = get_students_from_sheets()
@@ -165,7 +197,22 @@ def transform(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     transformed_records = []
     
     for msg in messages:
-        phone_number = msg.get('phone', '').strip()
+        # Try multiple possible field names for phone number
+        phone_number = (
+            msg.get('phone', '') or 
+            msg.get('phone_number', '') or 
+            msg.get('from', '') or
+            msg.get('sender', '') or
+            ''
+        ).strip()
+        
+        # Normalize phone number to match sheets format
+        phone_number = normalize_phone_number(phone_number)
+        
+        if not phone_number:
+            print(f"Warning: Message missing phone field. Available fields: {list(msg.keys())}")
+            continue
+        
         text = msg.get('text', '')
         current_timestamp = msg.get('timestamp')
         
@@ -182,7 +229,7 @@ def transform(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         
         # Check if student exists in sheets
         if phone_number not in students_dict:
-            print(f"Warning: Phone {phone_number} not found in Google Sheets - skipping")
+            print(f"Warning: Phone '{phone_number}' not found in Google Sheets - skipping")
             continue
         
         # Get student info from sheets
@@ -242,3 +289,33 @@ def update_student_stats(stats_collection, phone_number: str, message_type: str,
         upsert=True
     )
     print(f"Updated stats for {phone_number}: {update_field} = {timestamp}")
+
+
+# Example usage for testing
+if __name__ == '__main__':
+    # Simulated extract data (this would come from your extract phase)
+    sample_messages = [
+        {
+            'phone': '0501234567',
+            'text': 'שלחתי הודעה למורה',
+            'timestamp': datetime.now()
+        },
+        {
+            'phone': '0507654321',
+            'text': 'העלתי תרגול לתיקייה',
+            'timestamp': datetime.now()
+        }
+    ]
+    
+    # Run transform
+    transformed_data = transform(sample_messages)
+    
+    # Print results
+    if transformed_data:
+        print("\nTransformed records:")
+        for i, record in enumerate(transformed_data, 1):
+            print(f"\nRecord {i}:")
+            for key, value in record.items():
+                print(f"  {key}: {value}")
+    else:
+        print("\nNo records were transformed")
