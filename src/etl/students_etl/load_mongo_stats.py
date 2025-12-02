@@ -6,6 +6,17 @@ from collections import defaultdict
 from src.etl.db.mongodb.mongo_handler import get_mongo_connection
 
 
+def parse_timestamp(timestamp_str: str) -> datetime:
+    """
+    Parse timestamp string in format 'HH:MM, DD.MM.YYYY' to datetime object.
+    """
+    try:
+        return datetime.strptime(timestamp_str, '%H:%M, %d.%m.%Y')
+    except Exception as e:
+        print(f"Error parsing timestamp '{timestamp_str}': {e}")
+        raise
+
+
 def generate_uniq_id(phone_number: str, name: str) -> str:
     """Generate a unique ID by hashing phone number and name."""
     combined = f"{phone_number}_{name}"
@@ -48,17 +59,32 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
     last_practice_timedate = None
     
     # Get existing timestamps from MongoDB to check for duplicates
-    existing_last_message = existing_doc.get('last_message_timedate') if existing_doc else None
-    existing_last_practice = existing_doc.get('last_practice_timedate') if existing_doc else None
+    existing_last_message = None
+    existing_last_practice = None
+    
+    if existing_doc:
+        if existing_doc.get('last_message_timedate'):
+            existing_last_message = parse_timestamp(existing_doc['last_message_timedate']) if isinstance(existing_doc['last_message_timedate'], str) else existing_doc['last_message_timedate']
+        if existing_doc.get('last_practice_timedate'):
+            existing_last_practice = parse_timestamp(existing_doc['last_practice_timedate']) if isinstance(existing_doc['last_practice_timedate'], str) else existing_doc['last_practice_timedate']
     
     # Get existing lessons or initialize empty
     existing_lessons = existing_doc.get('lessons', []) if existing_doc else []
-    lessons_dict = {lesson['lesson']: lesson for lesson in existing_lessons}
+    lessons_dict = {}
+    for lesson in existing_lessons:
+        lesson_copy = lesson.copy()
+        # Parse timestamp strings to datetime objects for comparison
+        if 'first_practice' in lesson_copy and isinstance(lesson_copy['first_practice'], str):
+            lesson_copy['first_practice'] = parse_timestamp(lesson_copy['first_practice'])
+        if 'last_practice' in lesson_copy and isinstance(lesson_copy['last_practice'], str):
+            lesson_copy['last_practice'] = parse_timestamp(lesson_copy['last_practice'])
+        lessons_dict[lesson['lesson']] = lesson_copy
     
     # Process each message
     for msg in student_messages:
         msg_type = msg['message_type']
-        current_timestamp = msg['current_timestamp']
+        current_timestamp_str = msg['current_timestamp']
+        current_timestamp = parse_timestamp(current_timestamp_str)
         msg_lesson = msg['lesson']
         msg_teacher = msg['teacher']
         
@@ -91,10 +117,6 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
                 print(f"  ⚠ Skipping duplicate practice in batch for {name}")
                 continue
             
-            # Update last_practice_timedate to the most recent
-            if last_practice_timedate is None or current_timestamp > last_practice_timedate:
-                last_practice_timedate = current_timestamp
-            
             # Check if this lesson already exists
             if msg_lesson in lessons_dict:
                 # Update existing lesson
@@ -103,10 +125,15 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
                 # Only update if this practice is newer than the last one for this lesson
                 if current_timestamp > lesson_entry['last_practice']:
                     lesson_entry['practice_count'] += 1
-                    lesson_entry['teacher'] = msg_teacher  # Update teacher (might change)
+                    lesson_entry['teacher'] = msg_teacher
                     lesson_entry['last_practice'] = current_timestamp
+                    
+                    # Update the global last_practice_timedate
+                    if last_practice_timedate is None or current_timestamp > last_practice_timedate:
+                        last_practice_timedate = current_timestamp
                 else:
                     print(f"  ⚠ Skipping duplicate practice for {name} lesson {msg_lesson} - already processed")
+                    continue
             else:
                 # Create new lesson entry
                 new_lesson = {
@@ -117,6 +144,10 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
                     'last_practice': current_timestamp
                 }
                 lessons_dict[msg_lesson] = new_lesson
+                
+                # Update the global last_practice_timedate for new lessons
+                if last_practice_timedate is None or current_timestamp > last_practice_timedate:
+                    last_practice_timedate = current_timestamp
     
     # Convert lessons_dict back to list
     lessons_list = list(lessons_dict.values())
@@ -128,11 +159,19 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
     if message_count_increment > 0:
         inc_operations['total_messages'] = message_count_increment
     
+    # Convert datetime objects back to strings for MongoDB storage
     if last_message_timedate:
-        set_operations['last_message_timedate'] = last_message_timedate
+        set_operations['last_message_timedate'] = last_message_timedate.strftime('%H:%M, %d.%m.%Y')
     
     if last_practice_timedate:
-        set_operations['last_practice_timedate'] = last_practice_timedate
+        set_operations['last_practice_timedate'] = last_practice_timedate.strftime('%H:%M, %d.%m.%Y')
+    
+    # Convert lesson timestamps back to strings
+    for lesson in lessons_list:
+        if 'first_practice' in lesson and isinstance(lesson['first_practice'], datetime):
+            lesson['first_practice'] = lesson['first_practice'].strftime('%H:%M, %d.%m.%Y')
+        if 'last_practice' in lesson and isinstance(lesson['last_practice'], datetime):
+            lesson['last_practice'] = lesson['last_practice'].strftime('%H:%M, %d.%m.%Y')
     
     # Always update lessons array
     set_operations['lessons'] = lessons_list
