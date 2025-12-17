@@ -128,8 +128,14 @@ def read_messages(driver, message_count):
             else:
                 timestamp, sender = "?", "?"
 
-            text_elems = msg.find_elements(By.CSS_SELECTOR, 'span.selectable-text span')
-            text = " ".join([t.text for t in text_elems]) if text_elems else ""
+            # WhatsApp Web 2025+ message text selector
+            text_elems = msg.find_elements(
+                By.CSS_SELECTOR,
+                'span[dir="ltr"], span[dir="rtl"]'
+            )
+
+            text = " ".join(t.text for t in text_elems).strip()
+
 
             data.append({
                 "sender": sender,
@@ -156,7 +162,7 @@ def run_multi_group_reader():
         # --- Group 1 ---
         open_group(driver, wait, STUDENTS)
         students_messages = read_messages(driver, MESSAGE_COUNT)
-
+        print(students_messages)
         # --- Group 2 ---
         open_group(driver, wait, SALES)
         sales_messages = read_messages(driver, MESSAGE_COUNT)
