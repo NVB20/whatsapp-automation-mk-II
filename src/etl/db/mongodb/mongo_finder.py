@@ -23,6 +23,60 @@ def is_wsl():
         return False
 
 
+def is_running_in_docker():
+    """
+    Check if we're running inside a Docker container.
+
+    This is critical for determining the correct MongoDB host:
+    - Inside Docker: use 'mongo' (service name from docker-compose)
+    - Outside Docker (local dev): use 'localhost'
+    """
+    # Method 1: Check /proc/1/cgroup (most reliable - checks PID 1)
+    try:
+        with open("/proc/1/cgroup", "rt") as f:
+            content = f.read()
+            if "docker" in content or "kubepods" in content:
+                print("DEBUG: Found docker/kubepods in /proc/1/cgroup - running in Docker")
+                return True
+    except FileNotFoundError:
+        # Not Linux or /proc not available
+        pass
+    except Exception as e:
+        print(f"DEBUG: Could not read /proc/1/cgroup: {e}")
+
+    # Method 2: Check for .dockerenv file
+    if os.path.exists('/.dockerenv'):
+        print("DEBUG: Found /.dockerenv file - running in Docker")
+        return True
+
+    # Method 3: Check current process cgroup
+    try:
+        with open('/proc/self/cgroup', 'r') as f:
+            content = f.read()
+            if 'docker' in content or 'containerd' in content:
+                print("DEBUG: Found docker/containerd in /proc/self/cgroup - running in Docker")
+                return True
+    except:
+        pass
+
+    # Method 4: Check environment variable (set by docker-compose)
+    if os.getenv('IN_DOCKER') or os.getenv('DOCKER_CONTAINER'):
+        print("DEBUG: Found IN_DOCKER env var - running in Docker")
+        return True
+
+    # Method 5: Check if hostname matches container ID pattern
+    try:
+        hostname = os.uname().nodename
+        if len(hostname) == 12 and all(c in '0123456789abcdef' for c in hostname):
+            print(f"DEBUG: Hostname '{hostname}' looks like container ID - running in Docker")
+            return True
+    except:
+        pass
+
+    print("DEBUG: Not detected as running in Docker - assuming local development")
+    return False
+
+
 def get_docker_container_ip(container_name):
     try:
         # Method 1: Using docker inspect
@@ -48,28 +102,52 @@ def get_docker_container_ip(container_name):
     return None
 
 
-def get_mongo_host():  
-    # On Windows or WSL, Docker container IPs are not accessible from host
-    # Always use localhost with port mapping
+def get_mongo_host():
+    """
+    Determine the correct MongoDB host based on the environment.
+
+    Priority:
+    1. MONGO_HOST environment variable (if explicitly set)
+    2. Auto-detection based on environment
+    """
+    print(f"DEBUG: Environment detection starting...")
+
+    # Check if MONGO_HOST is explicitly set in environment
+    explicit_host = os.getenv('MONGO_HOST')
+    if explicit_host:
+        print(f"✓ Using explicit MONGO_HOST from environment: {explicit_host}")
+        return explicit_host
+
+    # Auto-detect environment
+    if is_running_in_docker():
+        host = 'mongo'  # Default service name in docker-compose
+        print(f"✓ Detected Docker container environment")
+        print(f"  → Using MongoDB host: {host} (docker-compose service name)")
+        return host
+
+    # Running locally (VSCode, terminal, etc.)
     if is_windows():
-        print(f"Detected Windows - using localhost (container IPs not accessible from Windows host)")
+        print(f"✓ Detected Windows host environment")
+        print(f"  → Using MongoDB host: localhost (local development)")
         return "localhost"
-    
+
     if is_wsl():
-        print(f"Detected WSL - using localhost (container IPs not accessible from WSL)")
+        print(f"✓ Detected WSL environment")
+        print(f"  → Using MongoDB host: localhost (local development)")
         return "localhost"
-    
-    # On Linux, we can try to use container IP
+
+    # Linux host - try to find MongoDB container
     container_name = os.getenv("MONGO_CONTAINER_NAME")
     if container_name:
-        print(f"Detected Linux - attempting to find Docker container: {container_name}")
+        print(f"✓ Detected Linux host - attempting to find MongoDB container: {container_name}")
         container_ip = get_docker_container_ip(container_name)
         if container_ip:
-            print(f"Note: Using container IP. If this fails, set MONGO_HOST=localhost in .env")
+            print(f"  → Using MongoDB container IP: {container_ip}")
+            print(f"  Note: If connection fails, set MONGO_HOST=localhost in .env")
             return container_ip
-    
-    # Fallback to localhost
-    print(f"Using default: localhost")
+
+    # Final fallback
+    print(f"✓ Using default MongoDB host: localhost (local development)")
     return "localhost"
 
 
@@ -113,7 +191,7 @@ def build_mongo_uri(host):
     """Build MongoDB connection URI"""
     if MONGO_USERNAME and MONGO_PASSWORD:
         # With authentication
-        return f"mongodb://{MONGO_USERNAME}:{MONGO_PASSWORD}@{host}:{MONGO_PORT}/"
+        return f"mongodb://{MONGO_USERNAME}:{MONGO_PASSWORD}@{host}:{MONGO_PORT}/?authSource=admin"
     else:
         # Without authentication
         return f"mongodb://{host}:{MONGO_PORT}/"

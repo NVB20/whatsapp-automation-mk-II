@@ -1,11 +1,13 @@
 import os
+from datetime import datetime
 from dotenv import load_dotenv
 from pymongo import MongoClient, ASCENDING
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 from src.etl.db.mongodb.mongo_finder import get_mongo_host, build_mongo_uri, list_mongo_containers
 
-# Load environment variables
-load_dotenv()
+# Only load .env if environment variables aren't already set (docker-compose takes precedence)
+if not os.getenv('MONGO_HOST'):
+    load_dotenv()
 
 # MongoDB configuration
 MONGO_PORT = os.getenv("MONGO_PORT")
@@ -78,6 +80,48 @@ class MongoDBConnection:
         """Initialize MongoDB connection if not already connected"""
         if self._client is None:
             self._connect()
+    
+    @staticmethod
+    def get_current_timestamp():
+        """
+        Get current timestamp as string in format: HH:MM, DD.MM.YYYY
+        Returns: String timestamp (e.g., "14:30, 09.12.2025")
+        """
+        now = datetime.now()
+        return now.strftime("%H:%M, %d.%m.%Y")
+    
+    @staticmethod
+    def parse_timestamp(timestamp_str):
+        """
+        Parse timestamp string back to datetime object
+        Args:
+            timestamp_str: String in format "HH:MM, DD.MM.YYYY"
+        Returns: datetime object or None if parsing fails
+        """
+        try:
+            return datetime.strptime(timestamp_str, "%H:%M, %d.%m.%Y")
+        except (ValueError, TypeError):
+            return None
+    
+    @staticmethod
+    def add_timestamps(document, include_created=True, include_updated=True):
+        """
+        Add timestamp fields to a document
+        Args:
+            document: Dictionary to add timestamps to
+            include_created: Whether to add created_at field
+            include_updated: Whether to add updated_at field
+        Returns: Modified document with timestamps
+        """
+        current_time = MongoDBConnection.get_current_timestamp()
+        
+        if include_created and 'created_at' not in document:
+            document['created_at'] = current_time
+        
+        if include_updated:
+            document['updated_at'] = current_time
+        
+        return document
     
     def _connect(self):
         """Establish connection to MongoDB"""
@@ -156,25 +200,42 @@ class MongoDBConnection:
             print(f"Warning: Could not setup collections: {e}")
     
     def _create_student_stats_indexes(self, collection, collection_name):
-        """Create indexes for student_stats collection"""
+        """
+        Create indexes for student_stats collection
+
+        Schema note: Each lesson object now contains:
+        - lesson: str
+        - teacher: str
+        - practice_count: int
+        - first_practice: str (timestamp)
+        - last_practice: str (timestamp)
+        - paid: bool (payment status for this class)
+        - message_count: int (messages sent for this class)
+        """
         try:
             # Index on phone_number for fast lookups
             collection.create_index([("phone_number", ASCENDING)], name="phone_number_idx")
-            
+
             # Index on uniq_id (unique identifier)
             collection.create_index([("uniq_id", ASCENDING)], unique=True, name="uniq_id_idx")
-            
+
             # Index on current_lesson for filtering
             collection.create_index([("current_lesson", ASCENDING)], name="current_lesson_idx")
-            
-            # Index on updated_at for sorting
+
+            # Index on updated_at for sorting (now a string)
             collection.create_index([("updated_at", ASCENDING)], name="updated_at_idx")
-            
+
+            # Index on created_at for sorting (now a string)
+            collection.create_index([("created_at", ASCENDING)], name="created_at_idx")
+
             # Index on name for searching
             collection.create_index([("name", ASCENDING)], name="name_idx")
-            
+
+            # Index on lessons.paid for payment status queries
+            collection.create_index([("lessons.paid", ASCENDING)], name="lessons_paid_idx")
+
             print(f"   ✓ Created indexes for {collection_name} (student statistics)")
-            
+
         except Exception as e:
             print(f"   ⚠ Could not create indexes for {collection_name}: {e}")
     
@@ -261,6 +322,41 @@ class MongoDBConnection:
     def get_logger_stats_collection(self):
         """Get logger_stats collection from logger_db"""
         return self.get_logger_database()[LOGGER_STATS]
+    
+    def insert_with_timestamps(self, collection, document):
+        """
+        Insert a document with automatic timestamps
+        Args:
+            collection: MongoDB collection object
+            document: Document to insert
+        Returns: Insert result
+        """
+        document = self.add_timestamps(document, include_created=True, include_updated=True)
+        return collection.insert_one(document)
+    
+    def update_with_timestamp(self, collection, filter_query, update_data, upsert=False):
+        """
+        Update a document and automatically set updated_at timestamp
+        Args:
+            collection: MongoDB collection object
+            filter_query: Query to find document
+            update_data: Data to update (should be a dict, not $set operator)
+            upsert: Whether to insert if not found
+        Returns: Update result
+        """
+        # Add updated_at to the update data
+        update_data['updated_at'] = self.get_current_timestamp()
+        
+        # If upserting, also add created_at
+        if upsert:
+            update_operation = {
+                "$set": update_data,
+                "$setOnInsert": {"created_at": self.get_current_timestamp()}
+            }
+        else:
+            update_operation = {"$set": update_data}
+        
+        return collection.update_one(filter_query, update_operation, upsert=upsert)
     
     def test_connection(self):
         """Test if connection is alive"""
