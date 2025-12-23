@@ -14,13 +14,27 @@ WORKSHEET_NAME = "main"
 
 def parse_timestamp(timestamp_str: str) -> datetime:
     """
-    Parse timestamp string in format 'HH:MM, DD.MM.YYYY' to datetime object.
+    Parse timestamp string to datetime object.
+    Handles multiple formats:
+    - '18:51, 12/4/2025' (24-hour format with M/D/YYYY)
+    - '6:51 PM, 12/4/2025' (12-hour format with AM/PM)
+    - 'HH:MM, DD.MM.YYYY' (24-hour format with D.M.YYYY)
     """
-    try:
-        return datetime.strptime(timestamp_str, '%H:%M, %d.%m.%Y')
-    except Exception as e:
-        print(f"Error parsing timestamp '{timestamp_str}': {e}")
-        raise
+    formats = [
+        '%H:%M, %m/%d/%Y',      # '18:51, 12/4/2025'
+        '%I:%M %p, %m/%d/%Y',   # '6:51 PM, 12/4/2025'
+        '%H:%M, %d.%m.%Y',      # 'HH:MM, DD.MM.YYYY'
+    ]
+    
+    for fmt in formats:
+        try:
+            return datetime.strptime(timestamp_str, fmt)
+        except ValueError:
+            continue
+    
+    # If none of the formats worked, raise an error
+    print(f"Error parsing timestamp '{timestamp_str}': Does not match any known format")
+    raise ValueError(f"Could not parse timestamp: {timestamp_str}")
 
 
 def update_practice_dates(transformed_records: List[Dict[str, Any]]) -> Dict[str, Any]:

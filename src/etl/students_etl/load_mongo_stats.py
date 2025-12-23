@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import List, Dict, Any
 from collections import defaultdict
 
-from src.etl.db.mongodb.mongo_handler import get_mongo_connection
+from src.etl.db.mongodb.mongo_handler import get_mongo_connection, MongoDBConnection
 
 
 def parse_timestamp(timestamp_str: str) -> datetime:
@@ -28,14 +28,10 @@ def parse_timestamp(timestamp_str: str) -> datetime:
 
 def format_timestamp(dt: datetime) -> str:
     """
-    Format datetime object to string in format 'HH:MM, DD.M.YYYY'
-    Note: Single digit months are not zero-padded (e.g., 19.6.2025 not 19.06.2025)
+    Format datetime object to string in format 'HH:MM, DD.MM.YYYY'
+    Uses zero-padded format for consistency
     """
-    import platform
-    if platform.system() == 'Windows':
-        return dt.strftime('%H:%M, %#d.%#m.%Y')
-    else:
-        return dt.strftime('%H:%M, %-d.%-m.%Y')
+    return dt.strftime('%H:%M, %d.%m.%Y')
 
 
 def generate_uniq_id(phone_number: str, name: str) -> str:
@@ -107,7 +103,7 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
                         lesson_copy[key] = parse_timestamp(lesson_copy[key])
                     except:
                         pass
-            
+
             # Ensure practice_count is an integer
             if 'practice_count' in lesson_copy:
                 try:
@@ -115,9 +111,24 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
                 except (ValueError, TypeError):
                     lesson_copy['practice_count'] = 0
 
+            # Ensure message_count exists (backward compatibility)
+            if 'message_count' not in lesson_copy:
+                lesson_copy['message_count'] = 0
+            else:
+                try:
+                    lesson_copy['message_count'] = int(lesson_copy['message_count'])
+                except (ValueError, TypeError):
+                    lesson_copy['message_count'] = 0
+
+            # Ensure paid exists (backward compatibility - default to False)
+            if 'paid' not in lesson_copy:
+                lesson_copy['paid'] = False
+            else:
+                # Ensure it's a boolean
+                lesson_copy['paid'] = bool(lesson_copy['paid'])
+
             lessons_dict[lesson_copy['lesson']] = lesson_copy
 
-    message_count_increment = 0
     last_message_timedate = None
     last_practice_timedate = None
 
@@ -135,7 +146,22 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
             if last_message_timedate and ts <= last_message_timedate:
                 continue
 
-            message_count_increment += 1
+            # Increment message count at lesson level
+            if msg_lesson in lessons_dict:
+                lesson_entry = lessons_dict[msg_lesson]
+                lesson_entry['message_count'] = lesson_entry.get('message_count', 0) + 1
+            else:
+                # Create lesson entry if it doesn't exist
+                lessons_dict[msg_lesson] = {
+                    'lesson': msg_lesson,
+                    'teacher': msg_teacher,
+                    'practice_count': 0,
+                    'message_count': 1,
+                    'first_practice': None,
+                    'last_practice': None,
+                    'paid': False
+                }
+
             if not last_message_timedate or ts > last_message_timedate:
                 last_message_timedate = ts
 
@@ -166,8 +192,10 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
                     'lesson': msg_lesson,
                     'teacher': msg_teacher,
                     'practice_count': 1,
+                    'message_count': 0,
                     'first_practice': ts,
-                    'last_practice': ts
+                    'last_practice': ts,
+                    'paid': False
                 }
 
                 if not last_practice_timedate or ts > last_practice_timedate:
@@ -179,8 +207,10 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
             'lesson': current_lesson,
             'teacher': first_msg['teacher'],
             'practice_count': 0,
+            'message_count': 0,
             'first_practice': None,
-            'last_practice': None
+            'last_practice': None,
+            'paid': False
         }
 
     # SORT LESSONS
@@ -198,19 +228,14 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
             if isinstance(lesson.get(key), datetime):
                 lesson[key] = format_timestamp(lesson[key])
 
-    # PREPARE SETS FOR MONGO
+    # PREPARE SETS FOR MONGO - USE STRING TIMESTAMPS
     set_ops = {
         'phone_number': phone_number,
         'name': name,
         'current_lesson': current_lesson,
         'lessons': lessons_list,
-        'updated_at': datetime.now(),
+        'updated_at': MongoDBConnection.get_current_timestamp(),
     }
-
-    inc_ops = {}
-
-    if message_count_increment > 0:
-        inc_ops['total_messages'] = message_count_increment
 
     if last_message_timedate:
         set_ops['last_message_timedate'] = format_timestamp(last_message_timedate)
@@ -219,13 +244,12 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
         set_ops['last_practice_timedate'] = format_timestamp(last_practice_timedate)
 
     if not existing_doc:
-        set_ops['created_at'] = datetime.now()
-        set_ops['total_messages'] = message_count_increment
-        inc_ops = {}
+        set_ops['created_at'] = MongoDBConnection.get_current_timestamp()
 
     update_doc = {'$set': set_ops}
-    if inc_ops:
-        update_doc['$inc'] = inc_ops
+
+    # Remove deprecated total_messages field if it exists
+    update_doc['$unset'] = {'total_messages': ""}
 
     return {
         'filter': {'uniq_id': uniq_id},
@@ -322,5 +346,99 @@ def load(transformed_records: List[Dict[str, Any]]) -> Dict[str, Any]:
     print(f"  Practices loaded: {stats['practices_loaded']}")
     print(f"  Errors: {stats['errors']}")
     print(f"{'='*60}\n")
-    
+
     return stats
+
+
+def migrate_existing_data():
+    """
+    Migration helper function to add new fields to existing lesson records.
+
+    This function:
+    1. Adds 'paid' field (default: False) to lessons missing it
+    2. Adds 'message_count' field (default: 0) to lessons missing it
+    3. Preserves all existing data
+
+    Run this once after deploying the new code to migrate existing records.
+    Safe to run multiple times - it only updates missing fields.
+    """
+    print(f"\n{'='*60}")
+    print("MIGRATION: Adding new fields to existing lesson records")
+    print(f"{'='*60}\n")
+
+    mongo_conn = get_mongo_connection()
+    stats_collection = mongo_conn.get_students_stats_collection()
+
+    # Find all student documents
+    all_students = stats_collection.find({})
+
+    migrated_count = 0
+    error_count = 0
+
+    for student in all_students:
+        try:
+            uniq_id = student.get('uniq_id')
+            name = student.get('name', 'Unknown')
+            lessons = student.get('lessons', [])
+
+            if not lessons:
+                continue
+
+            updated_lessons = []
+            needs_update = False
+
+            for lesson in lessons:
+                if not isinstance(lesson, dict):
+                    updated_lessons.append(lesson)
+                    continue
+
+                lesson_copy = lesson.copy()
+
+                # Add paid field if missing
+                if 'paid' not in lesson_copy:
+                    lesson_copy['paid'] = False
+                    needs_update = True
+
+                # Add message_count field if missing
+                if 'message_count' not in lesson_copy:
+                    lesson_copy['message_count'] = 0
+                    needs_update = True
+
+                updated_lessons.append(lesson_copy)
+
+            # Update document if any lessons were modified
+            if needs_update:
+                stats_collection.update_one(
+                    {'uniq_id': uniq_id},
+                    {
+                        '$set': {
+                            'lessons': updated_lessons,
+                            'updated_at': MongoDBConnection.get_current_timestamp()
+                        }
+                    }
+                )
+                migrated_count += 1
+                print(f"✓ Migrated: {name} ({len(updated_lessons)} lessons)")
+
+        except Exception as e:
+            error_count += 1
+            print(f"✗ Error migrating student {student.get('name', 'Unknown')}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    print(f"\n{'='*60}")
+    print(f"Migration complete:")
+    print(f"  Students migrated: {migrated_count}")
+    print(f"  Errors: {error_count}")
+    print(f"{'='*60}\n")
+
+    return {'migrated': migrated_count, 'errors': error_count}
+
+
+if __name__ == '__main__':
+    """
+    Run migration to add new fields to existing data.
+    Usage: python -m src.etl.students_etl.load_mongo_stats
+    """
+    print("Running migration to add 'paid' and 'message_count' fields to lessons...")
+    migrate_existing_data()
