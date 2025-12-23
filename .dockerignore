@@ -7,3 +7,4 @@ js
 .pytest_cache
 message_data_exemple.txt
 .vscode
+*.md
